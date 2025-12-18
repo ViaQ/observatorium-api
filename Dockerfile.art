@@ -1,16 +1,11 @@
-FROM golang:1.23 AS builder
+FROM golang:1.24 AS builder
 
 ENV GOEXPERIMENT=strictfipsruntime
 ENV CGO_ENABLED=1
 ENV GOOS=linux
 ENV GOFLAGS="-p=4"
 
-ENV BUILD_VERSION=0.1.0
-ENV OS_GIT_MAJOR=0
-ENV OS_GIT_MINOR=1
-ENV OS_GIT_PATCH=0
-
-COPY ./lokistack-gateway /opt/app-root/src/lokistack-gateway
+COPY . /opt/app-root/src/lokistack-gateway
 WORKDIR /opt/app-root/src/lokistack-gateway
 
 RUN go build -tags strictfipsruntime -a -ldflags '-s -w' -o lokistack-gateway .
