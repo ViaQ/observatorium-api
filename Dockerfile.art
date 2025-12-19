@@ -20,7 +20,6 @@ ENTRYPOINT ["/usr/bin/lokistack-gateway"]
 ARG LOKISTACK_GATEWAY_COMMIT
 ARG LOKISTACK_GATEWAY_URL
 LABEL com.redhat.component="lokistack-gateway-container" \
-      cpe="cpe:/a:redhat:logging:6.3::el9" \
       description="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
       distribution-scope="subscription" \
       io.k8s.description="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
@@ -30,7 +29,6 @@ LABEL com.redhat.component="lokistack-gateway-container" \
       io.openshift.tags="openshift,logging,loki" \
       maintainer="AOS Logging <team-logging@redhat.com>" \
       name="openshift-logging/lokistack-gateway-rhel9" \
-      release="6.3" \
       summary="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
       vendor="Red Hat, Inc." \
       version_minor="v0.1" \
