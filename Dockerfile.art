@@ -1,0 +1,34 @@
+FROM golang:1.24 AS builder
+
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV GOFLAGS="-p=4"
+
+COPY . /opt/app-root/src/lokistack-gateway
+WORKDIR /opt/app-root/src/lokistack-gateway
+
+RUN go build -tags strictfipsruntime -a -ldflags '-s -w' -o lokistack-gateway .
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal
+
+COPY --from=builder /opt/app-root/src/lokistack-gateway/lokistack-gateway /usr/bin/lokistack-gateway
+
+EXPOSE 80
+ENTRYPOINT ["/usr/bin/lokistack-gateway"]
+
+ARG LOKISTACK_GATEWAY_COMMIT
+ARG LOKISTACK_GATEWAY_URL
+LABEL com.redhat.component="lokistack-gateway-container" \
+      description="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
+      distribution-scope="subscription" \
+      io.k8s.description="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
+      io.k8s.display-name="OpenShift Lokistack Gateway" \
+      io.openshift.maintainer.component="Logging" \
+      io.openshift.maintainer.product="OpenShift Container Platform" \
+      io.openshift.tags="openshift,logging,loki" \
+      maintainer="AOS Logging <team-logging@redhat.com>" \
+      name="openshift-logging/lokistack-gateway-rhel9" \
+      summary="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
+      vendor="Red Hat, Inc." \
+      version_minor="v0.1" \
+      version=v0.1.0
