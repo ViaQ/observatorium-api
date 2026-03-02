@@ -681,7 +681,6 @@ func main() {
 						metricslegacy.WithRegistry(reg),
 						metricslegacy.WithHandlerInstrumenter(instrumenter),
 						metricslegacy.WithGlobalMiddleware(metricsMiddlewares...),
-						metricslegacy.WithSpanRoutePrefix("/api/v1/{tenant}"),
 						metricslegacy.WithQueryMiddleware(authorization.WithAuthorizers(authorizers, rbac.Read, "metrics")),
 						metricslegacy.WithQueryMiddleware(metricsv1.WithEnforceTenancyOnQuery(cfg.metrics.tenantLabel, queryParamName)),
 						metricslegacy.WithUIMiddleware(authorization.WithAuthorizers(authorizers, rbac.Read, "metrics")),
@@ -739,7 +738,6 @@ func main() {
 						metricsv1.WithLogger(logger),
 						metricsv1.WithRegistry(reg),
 						metricsv1.WithHandlerInstrumenter(instrumenter),
-						metricsv1.WithSpanRoutePrefix("/api/metrics/v1/{tenant}"),
 						metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
 						metricsv1.WithWriteMiddleware(writePathRedirectProtection),
 						metricsv1.WithGlobalMiddleware(metricsMiddlewares...),
@@ -802,7 +800,6 @@ func main() {
 								logsv1.Logger(logger),
 								logsv1.WithRegistry(reg),
 								logsv1.WithHandlerInstrumenter(instrumenter),
-								logsv1.WithSpanRoutePrefix("/api/logs/v1/{tenant}"),
 								logsv1.WithWriteMiddleware(writePathRedirectProtection),
 								logsv1.WithGlobalMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
 								logsv1.WithGlobalMiddleware(authentication.WithTenantHeader(cfg.logs.tenantHeader, tenantIDs)),
@@ -1474,12 +1471,12 @@ func parseFlags() (config, error) {
 		}
 	}
 
-	if cfg.traces.enabled && cfg.server.grpcListen == "" {
-		return cfg, fmt.Errorf("-traces.write.endpoint is set to %q but -grpc.listen is not set", cfg.traces.writeOTLPGRPCEndpoint)
+	if cfg.traces.writeOTLPGRPCEndpoint != "" && cfg.server.grpcListen == "" {
+		return cfg, fmt.Errorf("--traces.write.endpoint is set to %q but --grpc.listen is not set", cfg.traces.writeOTLPGRPCEndpoint)
 	}
 
-	if !cfg.traces.enabled && cfg.server.grpcListen != "" {
-		return cfg, fmt.Errorf("-traces.write.endpoint is not set but -grpc.listen is set to %q", cfg.server.grpcListen)
+	if cfg.traces.writeOTLPGRPCEndpoint == "" && cfg.server.grpcListen != "" {
+		return cfg, fmt.Errorf("--traces.write.endpoint is not set but --grpc.listen is set to %q", cfg.server.grpcListen)
 	}
 
 	if rawTLSCipherSuites != "" {
@@ -1578,7 +1575,7 @@ func newGRPCServer(cfg *config, tenantHeader string, tenantIDs map[string]string
 		tracesv1.TraceRoute: connOtel,
 	}
 
-	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
+	director := func(ctx context.Context, fullMethodName string) (context.Context, grpc.ClientConnInterface, error) {
 		md, _ := metadata.FromIncomingContext(ctx)
 		outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
 
@@ -1610,13 +1607,20 @@ func newGRPCServer(cfg *config, tenantHeader string, tenantIDs map[string]string
 	}
 
 	if cfg.tls.serverCertFile != "" {
-		serverCert, err := credentials.NewServerTLSFromFile(cfg.tls.serverCertFile, cfg.tls.serverKeyFile)
+		tlsConfig, err := tls.NewServerConfig(
+			log.With(logger, "protocol", "gRPC"),
+			cfg.tls.serverCertFile,
+			cfg.tls.serverKeyFile,
+			cfg.tls.minVersion,
+			cfg.tls.maxVersion,
+			cfg.tls.clientAuthType,
+			cfg.tls.cipherSuites,
+		)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to create gRPC cert: %v\n", err)
-			return nil, err
+			return nil, fmt.Errorf("failed to create gRPC TLS config: %w", err)
 		}
 
-		opts = append(opts, grpc.Creds(serverCert))
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
 	}
 
 	gs := grpc.NewServer(opts...)
