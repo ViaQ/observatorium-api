@@ -2,12 +2,11 @@ package v1
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/go-kit/log"
@@ -25,23 +24,37 @@ const (
 	serviceAttributeKey   = "service.name"
 )
 
-func WithTraceQLNamespaceSelectAndForbidOtherAPIs() func(http.Handler) http.Handler {
+var allowedTempoAPIs = []*regexp.Regexp{
+	regexp.MustCompile(`^/api/traces/\w+$`),
+	regexp.MustCompile(`^/api/search$`),
+}
+
+func matchesAnyRegex(s string, patterns []*regexp.Regexp) bool {
+	for _, re := range patterns {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
+}
+
+func WithTraceQLNamespaceSelectAndForbidOtherAPIs(enabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// do not run if request is not for Tempo
-			if !strings.Contains(r.URL.Path, "/tempo") {
+			if !enabled {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// block other APIs than api/search and api/traces
-			if !strings.Contains(r.URL.Path, "/api/traces") &&
-				!strings.Contains(r.URL.Path, "/api/search") {
+			// This middleware is registered at /tempo/...
+			requestedTempoPath := strings.TrimPrefix(r.URL.Path, "/tempo")
+
+			if !matchesAnyRegex(requestedTempoPath, allowedTempoAPIs) {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
 
-			if strings.Contains(r.URL.Path, "/api/search") {
+			if requestedTempoPath == "/api/search" {
 				query := r.URL.Query()
 				q := query.Get("q")
 				traceQL, err := url.QueryUnescape(q)
@@ -64,7 +77,7 @@ func WithTraceQLNamespaceSelectAndForbidOtherAPIs() func(http.Handler) http.Hand
 
 func responseRBACModifier(log log.Logger) func(response *http.Response) error {
 	return func(response *http.Response) error {
-		if strings.Contains(response.Request.URL.Path, "/api/traces/") || strings.Contains(response.Request.URL.Path, "/api/search") {
+		if strings.HasPrefix(response.Request.URL.Path, "/api/traces/") || strings.HasPrefix(response.Request.URL.Path, "/api/search") {
 			allowedNamespaces := map[string]bool{}
 			namespaces := apilogsv1.AllowedNamespaces(response.Request.Context())
 			for _, ns := range namespaces {
@@ -73,32 +86,13 @@ func responseRBACModifier(log log.Logger) func(response *http.Response) error {
 			level.Debug(log).Log("AllowedNamespaces", fmt.Sprintf("%v", allowedNamespaces))
 
 			if response.StatusCode == http.StatusOK {
-				// Uncompressed reader
-				var reader io.ReadCloser
-				var err error
-
-				// Read what Jaeger UI sent back (which might be compressed)
-				switch response.Header.Get("Content-Encoding") {
-				case "gzip":
-					reader, err = gzip.NewReader(response.Body)
-					if err != nil {
-						return err
-					}
-					defer reader.Close()
-				case "deflate":
-					reader = flate.NewReader(response.Body)
-					defer reader.Close()
-				default:
-					reader = response.Body
-				}
-
-				b, err := io.ReadAll(reader)
+				b, err := io.ReadAll(response.Body)
 				if err != nil {
 					return err
 				}
 
 				responseBuffer := &bytes.Buffer{}
-				if strings.Contains(response.Request.URL.Path, "/api/traces/") {
+				if strings.HasPrefix(response.Request.URL.Path, "/api/traces/") {
 					trace := &tempopb.Trace{}
 					err = tempopb.UnmarshalFromJSONV1(b, trace)
 					if err != nil {
