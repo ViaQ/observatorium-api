@@ -102,6 +102,8 @@ Usage of ./observatorium-api:
     	File containing the TLS client key to authenticate against upstream logs servers. Leave blank to disable mTLS.
   -logs.tls.watch-certs
     	Watch for certificate changes and reload
+  -logs.user-field string
+    	The name of the structured metadata field that should hold the user ID in logs queries (e.g., 'user_id'). When not set (default), admin query detection is disabled and all queries use resource='logs'. This is opt-in only to ensure non-breaking changes.
   -logs.write-timeout duration
     	The HTTP write timeout for proxied requests to the logs endpoint. (default 10m0s)
   -logs.write.endpoint string

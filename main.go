@@ -169,6 +169,7 @@ type logsConfig struct {
 	upstreamKeyFile      string
 	tenantHeader         string
 	tenantLabel          string
+	userField            string
 	// Allow only read-only access on rules
 	rulesReadOnly        bool
 	rulesLabelFilters    map[string][]string
@@ -793,6 +794,37 @@ func main() {
 
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.Timeout(cfg.logs.upstreamWriteTimeout))
+
+					handlerOpts := []logsv1.HandlerOption{
+						logsv1.Logger(logger),
+						logsv1.WithRegistry(reg),
+						logsv1.WithHandlerInstrumenter(instrumenter),
+						logsv1.WithWriteMiddleware(writePathRedirectProtection),
+						logsv1.WithGlobalMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
+						logsv1.WithGlobalMiddleware(authentication.WithTenantHeader(cfg.logs.tenantHeader, tenantIDs)),
+						logsv1.WithReadMiddleware(authorization.WithLogsStreamSelectorsExtractor(logger, cfg.logs.authExtractSelectors)),
+					}
+
+					// Conditionally add admin query detector if user field is configured
+					if cfg.logs.userField != "" {
+						handlerOpts = append(handlerOpts,
+							logsv1.WithReadMiddleware(logsv1.WithAdminQueryDetector(cfg.logs.userField)),
+						)
+					}
+
+					// Add remaining middleware
+					handlerOpts = append(handlerOpts,
+						logsv1.WithReadMiddleware(authorization.WithAuthorizers(authorizers, rbac.Read, "logs")),
+						logsv1.WithReadMiddleware(logsv1.WithEnforceAuthorizationLabels()),
+						logsv1.WithWriteMiddleware(authorization.WithAuthorizers(authorizers, rbac.Write, "logs")),
+						logsv1.WithRulesLabelFilters(cfg.logs.rulesLabelFilters),
+						logsv1.WithRulesReadMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
+						logsv1.WithRulesReadMiddleware(logsv1.WithEnforceRulesAuthorizationLabels()),
+						logsv1.WithRulesReadMiddleware(logsv1.WithParametersAsLabelsFilterRules(cfg.logs.rulesLabelFilters)),
+						logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
+						logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceRuleLabels(cfg.logs.tenantLabel)),
+					)
+
 					r.Mount("/api/logs/v1/{tenant}",
 						stripTenantPrefix("/api/logs/v1",
 							logsv1.NewHandler(
@@ -802,22 +834,7 @@ func main() {
 								cfg.logs.rulesEndpoint,
 								cfg.logs.rulesReadOnly,
 								logsUpstreamClientOptions,
-								logsv1.Logger(logger),
-								logsv1.WithRegistry(reg),
-								logsv1.WithHandlerInstrumenter(instrumenter),
-								logsv1.WithWriteMiddleware(writePathRedirectProtection),
-								logsv1.WithGlobalMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
-								logsv1.WithGlobalMiddleware(authentication.WithTenantHeader(cfg.logs.tenantHeader, tenantIDs)),
-								logsv1.WithReadMiddleware(authorization.WithLogsStreamSelectorsExtractor(logger, cfg.logs.authExtractSelectors)),
-								logsv1.WithReadMiddleware(authorization.WithAuthorizers(authorizers, rbac.Read, "logs")),
-								logsv1.WithReadMiddleware(logsv1.WithEnforceAuthorizationLabels()),
-								logsv1.WithWriteMiddleware(authorization.WithAuthorizers(authorizers, rbac.Write, "logs")),
-								logsv1.WithRulesLabelFilters(cfg.logs.rulesLabelFilters),
-								logsv1.WithRulesReadMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
-								logsv1.WithRulesReadMiddleware(logsv1.WithEnforceRulesAuthorizationLabels()),
-								logsv1.WithRulesReadMiddleware(logsv1.WithParametersAsLabelsFilterRules(cfg.logs.rulesLabelFilters)),
-								logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
-								logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceRuleLabels(cfg.logs.tenantLabel)),
+								handlerOpts...,
 							),
 						),
 					)
@@ -1188,6 +1205,8 @@ func parseFlags() (config, error) {
 		"The endpoint against which to make write requests for logs.")
 	flag.StringVar(&rawLogsAuthExtractSelectors, "logs.auth.extract-selectors", "",
 		"Comma-separated list of stream selectors that should be extracted from queries and sent to OPA during authorization.")
+	flag.StringVar(&cfg.logs.userField, "logs.user-field", "",
+		"The name of the structured metadata field that should hold the user ID in logs queries (e.g., 'user_id'). When not set (default), admin query detection is disabled and all queries use resource='logs'. This is opt-in only to ensure non-breaking changes.")
 	flag.StringVar(&rawMetricsReadEndpoint, "metrics.read.endpoint", "",
 		"The endpoint against which to send read requests for metrics.")
 	flag.StringVar(&rawMetricsWriteEndpoint, "metrics.write.endpoint", "",
