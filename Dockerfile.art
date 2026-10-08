@@ -1,4 +1,4 @@
-FROM registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.24.6-202510150934.g4284440.el9 AS builder
+FROM registry.redhat.io/openshift/golang-builder:golang-builder-v1.26-rhel9 AS builder
 
 RUN dnf update -y crypto-policies-scripts
 RUN update-crypto-policies --set DEFAULT:PQ
@@ -13,7 +13,7 @@ WORKDIR /opt/app-root/src/lokistack-gateway
 
 RUN go build -tags strictfipsruntime -a -ldflags '-s -w' -o lokistack-gateway .
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8
 
 COPY --from=builder /etc/crypto-policies/ /etc/crypto-policies/
 COPY --from=builder /opt/app-root/src/lokistack-gateway/lokistack-gateway /usr/bin/lokistack-gateway
