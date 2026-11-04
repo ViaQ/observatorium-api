@@ -25,6 +25,10 @@ const (
 	// authorizationSelectorsKey is the key that holds the data about selectors present in the query.
 	authorizationSelectorsKey contextKey = "authzQuerySelectors"
 
+	// isAdminQueryKey is the key that holds the admin query detection flag
+	// in a request context.
+	isAdminQueryKey contextKey = "isAdminQuery"
+
 	// errorMessageForbidden is the error message presented to the user if the user doesn't have
 	// sufficient permissions to access the requested tenant.
 	errorMessageForbidden string = "You don't have permission to access this tenant"
@@ -163,7 +167,15 @@ func WithAuthorizers(authorizers map[string]rbac.Authorizer, permission rbac.Per
 				MetadataOnly:      metadataOnly,
 			}
 
-			statusCode, ok, data := a.Authorize(subject, groups, permission, resource, tenant, tenantID, token, extraAttributes)
+			// Check if this is an admin query (from admin query detector middleware)
+			// This only happens when --logs.user-field flag is set and admin query detector runs
+			// If flag not set, isAdminQuery won't be in context, and actualResource stays as "logs"
+			desiredResource := resource
+			if isAdminQuery, ok := GetIsAdminQuery(r.Context()); ok && isAdminQuery {
+				desiredResource = resource + "/admin" // "logs" → "logs/admin"
+			}
+
+			statusCode, ok, data := a.Authorize(subject, groups, permission, desiredResource, tenant, tenantID, token, extraAttributes)
 			if !ok {
 				switch statusCode {
 				case http.StatusForbidden:
@@ -178,4 +190,15 @@ func WithAuthorizers(authorizers map[string]rbac.Authorizer, permission rbac.Per
 			next.ServeHTTP(w, r.WithContext(WithData(ctx, data)))
 		})
 	}
+}
+
+// WithIsAdminQuery stores the admin query flag in the context.
+func WithIsAdminQuery(ctx context.Context, isAdmin bool) context.Context {
+	return context.WithValue(ctx, isAdminQueryKey, isAdmin)
+}
+
+// GetIsAdminQuery retrieves the admin query flag from the context.
+func GetIsAdminQuery(ctx context.Context) (bool, bool) {
+	val, ok := ctx.Value(isAdminQueryKey).(bool)
+	return val, ok
 }
