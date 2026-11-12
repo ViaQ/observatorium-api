@@ -1,0 +1,49 @@
+FROM registry.redhat.io/openshift/golang-builder:golang-builder-v1.26-rhel9 AS builder
+
+RUN dnf update -y crypto-policies-scripts
+RUN update-crypto-policies --set DEFAULT:PQ
+
+ENV GOEXPERIMENT=strictfipsruntime
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV GOFLAGS="-p=4"
+
+COPY . /opt/app-root/src/lokistack-gateway
+WORKDIR /opt/app-root/src/lokistack-gateway
+
+RUN go build -tags strictfipsruntime -a -ldflags '-s -w' -o lokistack-gateway .
+
+# Install runtime CA certificates into a staging root for the ubi-micro final image
+RUN mkdir -p /mnt/rootfs && \
+    dnf install -y --installroot=/mnt/rootfs \
+      --releasever=9 \
+      --setopt=install_weak_deps=false \
+      --nodocs \
+      ca-certificates && \
+    dnf --installroot=/mnt/rootfs clean all
+
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.8
+
+COPY --from=builder /mnt/rootfs/ /
+
+COPY --from=builder /etc/crypto-policies/ /etc/crypto-policies/
+COPY --from=builder /opt/app-root/src/lokistack-gateway/lokistack-gateway /usr/bin/lokistack-gateway
+
+EXPOSE 80
+ENTRYPOINT ["/usr/bin/lokistack-gateway"]
+
+LABEL com.redhat.component="lokistack-gateway-container" \
+      description="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
+      distribution-scope="subscription" \
+      io.k8s.description="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
+      io.k8s.display-name="OpenShift Lokistack Gateway" \
+      io.openshift.maintainer.component="Logging" \
+      io.openshift.maintainer.product="OpenShift Container Platform" \
+      io.openshift.tags="openshift,logging,loki" \
+      maintainer="AOS Logging <team-logging@redhat.com>" \
+      name="openshift-logging/lokistack-gateway-rhel9" \
+      summary="Horizontally-scalable authn/authz-securing reverse proxy for Loki." \
+      url="https://catalog.redhat.com/en/software/containers/openshift-logging/lokistack-gateway-rhel9/64479925e1820602a81cdf06" \
+      vendor="Red Hat, Inc." \
+      version_minor="v0.1" \
+      version=v0.1.0
